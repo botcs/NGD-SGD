@@ -8,7 +8,7 @@ import os
 import shutil
 import time
 import random
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -89,9 +89,9 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 parser.add_argument('--update-period', type=int, default=4)
 parser.add_argument('--ngd-alpha', type=float, default=4.0)
-parser.add_argument('--reparametrize', action="store_true")
-
+parser.add_argument('--reparametrized', action="store_true")
 parser.add_argument('--eval-freq', type=int, default=4)
+parser.add_argument('--state-dict', type=str, metavar='PATH',)
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
@@ -107,6 +107,7 @@ random.seed(args.manualSeed)
 torch.manual_seed(args.manualSeed)
 if use_cuda:
     torch.cuda.manual_seed_all(args.manualSeed)
+np.random.seed(args.manualSeed)
 
 best_acc = 0  # best test accuracy
 
@@ -180,7 +181,7 @@ def main():
             depth=args.depth,
             widen_factor=args.widen_factor,
             dropRate=args.drop,
-            reparametrize=args.reparametrize
+            reparametrized=args.reparametrized
         )
     elif args.arch.endswith('resnet'):
         model = models.__dict__[args.arch](
@@ -191,7 +192,6 @@ def main():
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
 
-    model = torch.nn.DataParallel(model).cuda()
     cudnn.benchmark = True
     print('    Total params: %.2fM' % (sum(p.numel()
                                            for p in model.parameters()) / 1000000.0))
@@ -227,6 +227,18 @@ def main():
         start_epoch = checkpoint['epoch']
         model.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
+    
+    if args.state_dict:
+        print(f'==> Loading weights from: {args.state_dict}')
+        state_dict = torch.load(args.state_dict)
+        if args.reparametrized:
+            model.load_state_dict(state_dict)
+        else:
+            load_nonreparametrized(model, state_dict)
+        
+
+    model = torch.nn.DataParallel(model).cuda()
+
 
     # learning rate scheduler
     if args.scheduler == 'step':
@@ -242,7 +254,7 @@ def main():
         scheduler.step()
 
         train_loss, train_acc = train(
-            trainloader, model, criterion, optimizer, writer, epoch, use_cuda)
+            trainloader, testloader, model, criterion, optimizer, writer, epoch, use_cuda, args.exp)
         test_loss, test_acc = test(
             testloader, model, criterion, writer, epoch, use_cuda)
 
@@ -261,7 +273,26 @@ def main():
     print(best_acc)
 
 
-def train(trainloader, model, criterion, optimizer, writer, epoch, use_cuda, norm_order=2):
+def infer_labels(testloader, model, use_cuda, epoch, batch_idx, exp):
+    print("==> Inferring labels")
+    # switch to evaluate mode
+    model.eval()
+    output_list = []
+    for _, (inputs, targets) in enumerate(testloader):
+        if use_cuda:
+            inputs, targets = inputs.cuda(), targets.cuda()
+
+        # compute output
+        outputs = model(inputs)
+        output_list.append(outputs.data.cpu())
+    
+    val_outputs = torch.cat(output_list)
+    filepath = os.path.join(exp, f"val_outputs_e{epoch:04}_b{batch_idx:07}.pth")
+    print("saved to: ", filepath)
+    torch.save(val_outputs, filepath)
+
+
+def train(trainloader, testloader, model, criterion, optimizer, writer, epoch, use_cuda, exp, norm_order=2):
     # switch to train mode
     model.train()
 
@@ -284,6 +315,8 @@ def train(trainloader, model, criterion, optimizer, writer, epoch, use_cuda, nor
         # compute output
         outputs = model(inputs)
         loss = criterion(outputs, targets)
+        if torch.isnan(loss):
+            raise RuntimeError("NaN occurred during training in the loss")
         optimizer.zero_grad()
 
         loss.backward()
@@ -306,6 +339,11 @@ def train(trainloader, model, criterion, optimizer, writer, epoch, use_cuda, nor
                   'Prec {prec.val:.4f} ({prec.avg:.4f})\t'.format(
                       epoch, batch_idx, len(trainloader), batch_time=batch_time,
                       loss=losses, prec=top1))
+
+        if batch_idx % 60 == 0:
+            infer_labels(testloader, model, use_cuda, epoch, batch_idx, exp)
+            model.train()
+
     # log to TensorBoard
     writer.add_scalar('train_loss', losses.avg, epoch)
     writer.add_scalar('train_prec', top1.avg, epoch)
@@ -403,6 +441,26 @@ def save_checkpoint(state, is_best, exp='exp', filename='checkpoint.pth.tar'):
         shutil.copyfile(filepath, os.path.join(
             exp, 'model_best.pth.tar'))
 
+
+def load_nonreparametrized(model, reparametrized_state_dict):
+    print("==> Loading non-reparametrized weights")
+    model_dict = model.state_dict()
+    for k, v in reparametrized_state_dict.items():
+        if "conv1.weight" in k or "conv2.weight" in k or "reparametrized" in k:
+            continue
+
+        if "conv1_original_weight" in k:
+            k_ = k.replace("conv1_original_weight", "conv1.weight")
+            model_dict[k_].copy_(v.data)
+
+        if "conv2_original_weight" in k:
+            k_ = k.replace("conv2_original_weight", "conv2.weight")
+            model_dict[k_].copy_(v.data)
+
+        if k not in model_dict:
+            continue
+
+        model_dict[k].copy_(v.data)
 
 if __name__ == '__main__':
     main()

@@ -10,3 +10,4 @@ __pycache__/*
 # experiment files
 /examples/*/exp
 /examples/*/data
+*.png

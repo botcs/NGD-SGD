@@ -66,6 +66,7 @@ from .vgg import *
 from .resnet import *
 from .resnext import *
 from .wrn import *
-from .wrn_b import *
+from .wrn_reparametrized import *
+# from .wrn_b import *
 from .preresnet import *
 from .densenet import *
