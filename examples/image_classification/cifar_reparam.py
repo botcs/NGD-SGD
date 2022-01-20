@@ -56,7 +56,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
-parser.add_argument('--print-freq', '--pf', default=10, type=int,
+parser.add_argument('--print-freq', '--pf', default=1, type=int,
                     help='print frequency')
 parser.add_argument('--beta1', default=0.9, type=float,
                     help='adam beta1')
@@ -189,6 +189,11 @@ def main():
             num_classes=num_classes,
             depth=args.depth,
         )
+    elif args.arch == 'vgg':
+        model = models.__dict__[args.arch](
+            num_classes=num_classes,
+            reparametrized=args.reparametrized
+        )
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
 
@@ -231,10 +236,8 @@ def main():
     if args.state_dict:
         print(f'==> Loading weights from: {args.state_dict}')
         state_dict = torch.load(args.state_dict)
-        if args.reparametrized:
-            model.load_state_dict(state_dict)
-        else:
-            load_nonreparametrized(model, state_dict)
+        model.load_state_dict(state_dict)
+        model.reparametrized(args.reparametrized)
         
 
     model = torch.nn.DataParallel(model).cuda()
@@ -252,11 +255,19 @@ def main():
     # Train and val
     for epoch in range(start_epoch, args.epochs):
         scheduler.step()
+        
+        if epoch % 10 == 0:
+            infer_labels(trainloader, model, use_cuda, epoch, 0, args.exp, is_train=True)
+            infer_labels(testloader, model, use_cuda, epoch, 0, args.exp, is_train=False)
 
         train_loss, train_acc = train(
             trainloader, testloader, model, criterion, optimizer, writer, epoch, use_cuda, args.exp)
-        test_loss, test_acc = test(
-            testloader, model, criterion, writer, epoch, use_cuda)
+        
+        if epoch % 10 == 0:
+            test_loss, test_acc = test(
+                testloader, model, criterion, writer, epoch, use_cuda)
+            
+
 
         # save model
         is_best = test_acc > best_acc
@@ -273,8 +284,9 @@ def main():
     print(best_acc)
 
 
-def infer_labels(testloader, model, use_cuda, epoch, batch_idx, exp):
-    print("==> Inferring labels")
+def infer_labels(testloader, model, use_cuda, epoch, batch_idx, exp, is_train):
+    prefix = "train" if is_train else "val"
+    print(f"==> Inferring labels for {prefix}-set")
     # switch to evaluate mode
     model.eval()
     output_list = []
@@ -283,13 +295,13 @@ def infer_labels(testloader, model, use_cuda, epoch, batch_idx, exp):
             inputs, targets = inputs.cuda(), targets.cuda()
 
         # compute output
-        outputs = model(inputs)
-        output_list.append(outputs.data.cpu())
+        output = model(inputs)
+        output_list.append(output.data.cpu())
     
-    val_outputs = torch.cat(output_list)
-    filepath = os.path.join(exp, f"val_outputs_e{epoch:04}_b{batch_idx:07}.pth")
+    outputs = torch.cat(output_list)
+    filepath = os.path.join(exp, f"{prefix}_outputs_e{epoch:04}_b{batch_idx:07}.pth")
     print("saved to: ", filepath)
-    torch.save(val_outputs, filepath)
+    torch.save(outputs, filepath)
 
 
 def train(trainloader, testloader, model, criterion, optimizer, writer, epoch, use_cuda, exp, norm_order=2):
@@ -340,9 +352,6 @@ def train(trainloader, testloader, model, criterion, optimizer, writer, epoch, u
                       epoch, batch_idx, len(trainloader), batch_time=batch_time,
                       loss=losses, prec=top1))
 
-        if batch_idx % 60 == 0:
-            infer_labels(testloader, model, use_cuda, epoch, batch_idx, exp)
-            model.train()
 
     # log to TensorBoard
     writer.add_scalar('train_loss', losses.avg, epoch)
@@ -442,25 +451,6 @@ def save_checkpoint(state, is_best, exp='exp', filename='checkpoint.pth.tar'):
             exp, 'model_best.pth.tar'))
 
 
-def load_nonreparametrized(model, reparametrized_state_dict):
-    print("==> Loading non-reparametrized weights")
-    model_dict = model.state_dict()
-    for k, v in reparametrized_state_dict.items():
-        if "conv1.weight" in k or "conv2.weight" in k or "reparametrized" in k:
-            continue
-
-        if "conv1_original_weight" in k:
-            k_ = k.replace("conv1_original_weight", "conv1.weight")
-            model_dict[k_].copy_(v.data)
-
-        if "conv2_original_weight" in k:
-            k_ = k.replace("conv2_original_weight", "conv2.weight")
-            model_dict[k_].copy_(v.data)
-
-        if k not in model_dict:
-            continue
-
-        model_dict[k].copy_(v.data)
 
 if __name__ == '__main__':
     main()

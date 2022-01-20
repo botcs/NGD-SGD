@@ -11,3 +11,4 @@ __pycache__/*
 /examples/*/exp
 /examples/*/data
 *.png
+*.pth

@@ -2,18 +2,20 @@ echo 'Running'
 
 . ./path.sh
 
-STATE_DICT="wrn-reparametrized-seed42.pth"
-EXP_DIR="vs-smalllr-largebs"
+STATE_DICT="vgg-reparametrized-seed42.pth"
+EXP_DIR="exp/vgg16/vs-lr1e-2-bs16384/"
+BATCH_SIZE=16384
+EPOCHS=1000
+
 
 python ./cifar_reparam.py \
     --exp $EXP_DIR/SGD/ \
-    -a wrn_reparametrized \
-    --depth 28 \
-    --widen-factor 10 \
-    --train-batch 4096 \
-    --test-batch 4096 \
+    -a vgg16 \
+    --lr 0.01 \
+    --train-batch $BATCH_SIZE \
+    --test-batch $BATCH_SIZE \
     --optimizer sgd \
-    --epochs 500 \
+    --epochs $EPOCHS \
     --scheduler step \
     --milestones 1000 \
     --gamma 0.1 \
@@ -25,13 +27,12 @@ python ./cifar_reparam.py \
 
 python ./cifar_reparam.py \
     --exp $EXP_DIR/NGD/ \
-    -a wrn_reparametrized \
-    --depth 28 \
-    --widen-factor 10 \
-    --train-batch 4096 \
-    --test-batch 4096 \
+    -a vgg16 \
+    --lr 0.01 \
+    --train-batch $BATCH_SIZE \
+    --test-batch $BATCH_SIZE \
     --optimizer ngd \
-    --epochs 500 \
+    --epochs $EPOCHS \
     --scheduler step \
     --milestones 1000 \
     --gamma 0.1 \
@@ -43,13 +44,12 @@ python ./cifar_reparam.py \
 
 python ./cifar_reparam.py \
     --exp $EXP_DIR/SGD-reparametrized/ \
-    -a wrn_reparametrized \
-    --depth 28 \
-    --widen-factor 10 \
-    --train-batch 4096 \
-    --test-batch 4096 \
+    -a vgg16 \
+    --lr 0.01 \
+    --train-batch $BATCH_SIZE \
+    --test-batch $BATCH_SIZE \
     --optimizer sgd \
-    --epochs 500 \
+    --epochs $EPOCHS \
     --scheduler step \
     --milestones 1000 \
     --gamma 0.1 \
@@ -62,13 +62,12 @@ python ./cifar_reparam.py \
 
 python ./cifar_reparam.py \
     --exp $EXP_DIR/NGD-reparametrized/ \
-    -a wrn_reparametrized \
-    --depth 28 \
-    --widen-factor 10 \
-    --train-batch 4096 \
-    --test-batch 4096 \
+    -a vgg16 \
+    --lr 0.01 \
+    --train-batch $BATCH_SIZE \
+    --test-batch $BATCH_SIZE \
     --optimizer ngd \
-    --epochs 500 \
+    --epochs $EPOCHS \
     --scheduler step \
     --milestones 1000 \
     --gamma 0.1 \
